@@ -76,3 +76,82 @@ teardown() {
   run _clean_should_skip "$TEST_WORKTREES_DIR/clean-wt" "clean-wt"
   [ "$status" -eq 1 ]  # 1 = don't skip
 }
+
+@test "_clean_should_skip with force=1 does not skip dirty worktree" {
+  create_test_worktree "dirty-force"
+  echo "dirty" > "$TEST_WORKTREES_DIR/dirty-force/untracked.txt"
+  git -C "$TEST_WORKTREES_DIR/dirty-force" add untracked.txt
+  run _clean_should_skip "$TEST_WORKTREES_DIR/dirty-force" "dirty-force" 1
+  [ "$status" -eq 1 ]  # 1 = don't skip
+}
+
+@test "_clean_should_skip with force=1 does not skip worktree with untracked files" {
+  create_test_worktree "untracked-force"
+  echo "new" > "$TEST_WORKTREES_DIR/untracked-force/newfile.txt"
+  run _clean_should_skip "$TEST_WORKTREES_DIR/untracked-force" "untracked-force" 1
+  [ "$status" -eq 1 ]  # 1 = don't skip
+}
+
+@test "_clean_should_skip with force=1 still skips detached HEAD" {
+  run _clean_should_skip "/some/dir" "(detached)" 1
+  [ "$status" -eq 0 ]  # 0 = skip (protection maintained)
+}
+
+@test "_clean_should_skip with force=1 still skips empty branch" {
+  run _clean_should_skip "/some/dir" "" 1
+  [ "$status" -eq 0 ]  # 0 = skip (protection maintained)
+}
+
+@test "_clean_should_skip with force=1 still skips current active worktree" {
+  create_test_worktree "active-force"
+  run _clean_should_skip "$TEST_WORKTREES_DIR/active-force" "active-force" 1 "$TEST_WORKTREES_DIR/active-force"
+  [ "$status" -eq 0 ]  # 0 = skip (protection maintained)
+}
+
+@test "_clean_should_skip with force=1 skips current active worktree via symlink path" {
+  create_test_worktree "active-force-symlink"
+  ln -s "$TEST_WORKTREES_DIR/active-force-symlink" "$TEST_REPO/active-force-link"
+  run _clean_should_skip "$TEST_REPO/active-force-link" "active-force-symlink" 1 "$TEST_WORKTREES_DIR/active-force-symlink"
+  [ "$status" -eq 0 ]  # 0 = skip (protection maintained)
+}
+
+@test "cmd_clean accepts --force and -f flags without error" {
+  run cmd_clean --force
+  [ "$status" -eq 0 ]
+
+  run cmd_clean -f
+  [ "$status" -eq 0 ]
+}
+
+@test "cmd_clean --merged --force removes dirty merged worktrees" {
+  create_test_worktree "merged-force"
+  echo "dirty" > "$TEST_WORKTREES_DIR/merged-force/dirty.txt"
+  git -C "$TEST_WORKTREES_DIR/merged-force" add dirty.txt
+
+  _clean_detect_provider() { printf "github"; }
+  ensure_provider_cli() { return 0; }
+  check_branch_merged() { [ "$2" = "merged-force" ]; }
+  run_hooks_in() { return 0; }
+  run_hooks() { return 0; }
+
+  run cmd_clean --merged --force --yes
+  [ "$status" -eq 0 ]
+  [ ! -d "$TEST_WORKTREES_DIR/merged-force" ]
+}
+
+@test "cmd_clean --merged --force skips the current active worktree" {
+  create_test_worktree "active-merged"
+  cd "$TEST_WORKTREES_DIR/active-merged" || false
+  echo "dirty" > dirty.txt
+  git add dirty.txt
+
+  _clean_detect_provider() { printf "github"; }
+  ensure_provider_cli() { return 0; }
+  check_branch_merged() { [ "$2" = "active-merged" ]; }
+  run_hooks_in() { return 0; }
+  run_hooks() { return 0; }
+
+  run cmd_clean --merged --force --yes
+  [ "$status" -eq 0 ]
+  [ -d "$TEST_WORKTREES_DIR/active-merged" ]
+}

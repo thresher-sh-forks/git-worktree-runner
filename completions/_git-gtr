@@ -83,7 +83,9 @@ _git-gtr() {
       '--yes[Skip confirmation prompts]' \
       '-y[Skip confirmation prompts]' \
       '--dry-run[Show what would be removed]' \
-      '-n[Show what would be removed]'
+      '-n[Show what would be removed]' \
+      '--force[Force removal even if worktree has uncommitted changes or untracked files]' \
+      '-f[Force removal even if worktree has uncommitted changes or untracked files]'
     return
   fi
 
@@ -133,7 +135,7 @@ _git-gtr() {
       rm)
         _arguments \
           '--delete-branch[Delete branch]' \
-          '--force[Force removal even if dirty]' \
+          '--force[Force removal even if worktree has uncommitted changes or untracked files]' \
           '--yes[Non-interactive mode]'
         ;;
       mv|rename)

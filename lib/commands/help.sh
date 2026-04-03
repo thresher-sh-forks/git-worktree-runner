@@ -401,6 +401,27 @@ Command palette (gtr cd with no arguments, requires fzf):
 EOF
 }
 
+_help_trust() {
+  cat <<'EOF'
+git gtr trust - Trust .gtrconfig hooks
+
+Usage: git gtr trust
+
+Reviews and approves hook commands defined in the repository's .gtrconfig
+file. Hooks from .gtrconfig are not executed until explicitly trusted.
+
+This prevents malicious contributors from injecting arbitrary shell
+commands via shared .gtrconfig files. Trust is stored per content hash
+in ~/.config/gtr/trusted/ and must be re-approved if hooks change.
+
+Hooks from your local git config (.git/config, ~/.gitconfig) are always
+trusted since you control those files directly.
+
+Examples:
+  git gtr trust                                 # Review and approve hooks
+EOF
+}
+
 _help_version() {
   cat <<'EOF'
 git gtr version - Show version
@@ -571,6 +592,11 @@ SETUP & MAINTENANCE:
          --yes, -y: skip confirmation prompts
          --dry-run, -n: show what would be removed without removing
          --force, -f: force removal even if worktree has uncommitted changes or untracked files
+
+  trust
+         Review and approve .gtrconfig hook commands
+         Hooks from .gtrconfig are not executed until trusted
+         Trust is re-required when hook content changes
 
   completion <shell>
          Generate shell completions (bash, zsh, fish)

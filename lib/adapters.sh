@@ -166,9 +166,10 @@ editor_open() {
     target="$workspace"
   fi
 
-  # $GTR_EDITOR_CMD may contain arguments (e.g., "code --wait")
-  # Using eval here is necessary to handle multi-word commands properly
-  eval "$GTR_EDITOR_CMD \"\$target\""
+  # Split multi-word commands (e.g., "code --wait") into an array for safe execution
+  local _cmd_arr
+  read -ra _cmd_arr <<< "$GTR_EDITOR_CMD"
+  "${_cmd_arr[@]}" "$target"
 }
 
 # Globals set by load_ai_adapter: GTR_AI_CMD, GTR_AI_CMD_NAME
@@ -179,9 +180,10 @@ ai_can_start() {
 ai_start() {
   local path="$1"
   shift
-  # $GTR_AI_CMD may contain arguments (e.g., "bunx @github/copilot@latest")
-  # Using eval here is necessary to handle multi-word commands properly
-  (cd "$path" && eval "$GTR_AI_CMD \"\$@\"")
+  # Split multi-word commands (e.g., "bunx @github/copilot@latest") into an array for safe execution
+  local _cmd_arr
+  read -ra _cmd_arr <<< "$GTR_AI_CMD"
+  (cd "$path" && "${_cmd_arr[@]}" "$@")
 }
 
 # Standard AI adapter builder — used by adapter files that follow the common pattern
@@ -295,6 +297,15 @@ resolve_workspace_file() {
 # Usage: _load_adapter <type> <name> <label> <builtin_list> <path_hint>
 _load_adapter() {
   local type="$1" name="$2" label="$3" builtin_list="$4" path_hint="$5"
+
+  # Reject adapter names containing path traversal characters
+  case "$name" in
+    */* | *..* | *\\*)
+      log_error "$label name '$name' contains invalid characters"
+      return 1
+      ;;
+  esac
+
   local adapter_file="$GTR_DIR/adapters/${type}/${name}.sh"
 
   # 1. Try loading explicit adapter file (custom overrides like claude, nano)
@@ -331,6 +342,17 @@ _load_adapter() {
     log_info "Or use any $label command available in your PATH (e.g., $path_hint)"
     return 1
   fi
+
+  # Reject shell metacharacters in config-supplied command names to prevent injection
+  # Allows multi-word commands (e.g., "code --wait") but blocks shell operators
+  # shellcheck disable=SC2016 # Literal '$(' pattern match is intentional
+  case "$name" in
+    *\;* | *\`* | *'$('* | *\|* | *\&* | *'>'* | *'<'*)
+      log_error "$label '$name' contains shell metacharacters — refusing to execute"
+      log_info "Use a simple command name, optionally with flags (e.g., 'code --wait')"
+      return 1
+      ;;
+  esac
 
   # Set globals for generic adapter functions
   # Note: $name may contain arguments (e.g., "code --wait", "bunx @github/copilot@latest")

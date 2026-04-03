@@ -126,24 +126,32 @@ spawn_terminal_in() {
       fi
       ;;
     linux)
+      # Escape cmd and path for safe embedding in sh -c strings
+      local safe_sh_cmd safe_sh_path
+      safe_sh_cmd=$(printf '%q' "$cmd")
+      safe_sh_path=$(printf '%q' "$path")
       # Try common terminal emulators
       if command -v gnome-terminal >/dev/null 2>&1; then
-        gnome-terminal --working-directory="$path" --title="$title" -- sh -c "$cmd; exec \$SHELL" 2>/dev/null || true
+        gnome-terminal --working-directory="$path" --title="$title" -- sh -c "$safe_sh_cmd; exec \$SHELL" 2>/dev/null || true
       elif command -v konsole >/dev/null 2>&1; then
-        konsole --workdir "$path" -p "tabtitle=$title" -e sh -c "$cmd; exec \$SHELL" 2>/dev/null || true
+        konsole --workdir "$path" -p "tabtitle=$title" -e sh -c "$safe_sh_cmd; exec \$SHELL" 2>/dev/null || true
       elif command -v xterm >/dev/null 2>&1; then
-        xterm -T "$title" -e "cd \"$path\" && $cmd && exec \$SHELL" 2>/dev/null || true
+        xterm -T "$title" -e "cd $safe_sh_path && $safe_sh_cmd && exec \$SHELL" 2>/dev/null || true
       else
         log_warn "No supported terminal emulator found"
         return 1
       fi
       ;;
     windows)
+      # Escape for safe embedding in cmd.exe strings
+      local safe_win_cmd safe_win_path
+      safe_win_cmd=$(printf '%q' "$cmd")
+      safe_win_path=$(printf '%q' "$path")
       # Try Windows Terminal, then fallback to cmd
       if command -v wt >/dev/null 2>&1; then
         wt -d "$path" "$cmd" 2>/dev/null || true
       else
-        cmd.exe /c start "$title" cmd.exe /k "cd /d \"$path\" && $cmd" 2>/dev/null || true
+        cmd.exe /c start "$title" cmd.exe /k "cd /d $safe_win_path && $safe_win_cmd" 2>/dev/null || true
       fi
       ;;
     *)

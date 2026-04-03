@@ -96,6 +96,7 @@ _init_bash() {
 
 __FUNC___run_post_cd_hooks() {
   local dir="$1"
+  local _gtr_trust_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gtr/trusted"
 
   cd "$dir" && {
     local _gtr_hooks _gtr_hook _gtr_seen _gtr_config_file
@@ -103,16 +104,23 @@ __FUNC___run_post_cd_hooks() {
     _gtr_seen=""
     # Read from git config (local > global > system)
     _gtr_hooks="$(git config --get-all gtr.hook.postCd 2>/dev/null)" || true
-    # Read from .gtrconfig if it exists
+    # Read from .gtrconfig if it exists — only if trusted
     _gtr_config_file="$(git rev-parse --show-toplevel 2>/dev/null)/.gtrconfig"
     if [ -f "$_gtr_config_file" ]; then
       local _gtr_file_hooks
       _gtr_file_hooks="$(git config -f "$_gtr_config_file" --get-all hooks.postCd 2>/dev/null)" || true
       if [ -n "$_gtr_file_hooks" ]; then
-        if [ -n "$_gtr_hooks" ]; then
-          _gtr_hooks="$_gtr_hooks"$'\n'"$_gtr_file_hooks"
+        # Verify trust before including .gtrconfig hooks
+        local _gtr_hook_hash
+        _gtr_hook_hash="$(git config -f "$_gtr_config_file" --get-regexp '^hooks\.' 2>/dev/null | shasum -a 256 | cut -d' ' -f1)" || true
+        if [ -n "$_gtr_hook_hash" ] && [ -f "$_gtr_trust_dir/$_gtr_hook_hash" ]; then
+          if [ -n "$_gtr_hooks" ]; then
+            _gtr_hooks="$_gtr_hooks"$'\n'"$_gtr_file_hooks"
+          else
+            _gtr_hooks="$_gtr_file_hooks"
+          fi
         else
-          _gtr_hooks="$_gtr_file_hooks"
+          echo "__FUNC__: Untrusted .gtrconfig hooks skipped — run 'git gtr trust' to approve" >&2
         fi
       fi
     fi
@@ -273,6 +281,7 @@ _init_zsh() {
 __FUNC___run_post_cd_hooks() {
   emulate -L zsh
   local dir="$1"
+  local _gtr_trust_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gtr/trusted"
 
   cd "$dir" && {
     local _gtr_hooks _gtr_hook _gtr_seen _gtr_config_file
@@ -280,16 +289,23 @@ __FUNC___run_post_cd_hooks() {
     _gtr_seen=""
     # Read from git config (local > global > system)
     _gtr_hooks="$(git config --get-all gtr.hook.postCd 2>/dev/null)" || true
-    # Read from .gtrconfig if it exists
+    # Read from .gtrconfig if it exists — only if trusted
     _gtr_config_file="$(git rev-parse --show-toplevel 2>/dev/null)/.gtrconfig"
     if [ -f "$_gtr_config_file" ]; then
       local _gtr_file_hooks
       _gtr_file_hooks="$(git config -f "$_gtr_config_file" --get-all hooks.postCd 2>/dev/null)" || true
       if [ -n "$_gtr_file_hooks" ]; then
-        if [ -n "$_gtr_hooks" ]; then
-          _gtr_hooks="$_gtr_hooks"$'\n'"$_gtr_file_hooks"
+        # Verify trust before including .gtrconfig hooks
+        local _gtr_hook_hash
+        _gtr_hook_hash="$(git config -f "$_gtr_config_file" --get-regexp '^hooks\.' 2>/dev/null | shasum -a 256 | cut -d' ' -f1)" || true
+        if [ -n "$_gtr_hook_hash" ] && [ -f "$_gtr_trust_dir/$_gtr_hook_hash" ]; then
+          if [ -n "$_gtr_hooks" ]; then
+            _gtr_hooks="$_gtr_hooks"$'\n'"$_gtr_file_hooks"
+          else
+            _gtr_hooks="$_gtr_file_hooks"
+          fi
         else
-          _gtr_hooks="$_gtr_file_hooks"
+          echo "__FUNC__: Untrusted .gtrconfig hooks skipped — run 'git gtr trust' to approve" >&2
         fi
       fi
     fi
@@ -451,17 +467,30 @@ _init_fish() {
 
 function __FUNC___run_post_cd_hooks
   set -l dir "$argv[1]"
+  set -l _gtr_trust_dir "$HOME/.config/gtr/trusted"
+  if set -q XDG_CONFIG_HOME
+    set _gtr_trust_dir "$XDG_CONFIG_HOME/gtr/trusted"
+  end
   cd $dir
   and begin
     set -l _gtr_hooks
     set -l _gtr_seen
     # Read from git config (local > global > system)
     set -l _gtr_git_hooks (git config --get-all gtr.hook.postCd 2>/dev/null)
-    # Read from .gtrconfig if it exists
+    # Read from .gtrconfig if it exists — only if trusted
     set -l _gtr_config_file (git rev-parse --show-toplevel 2>/dev/null)"/.gtrconfig"
     set -l _gtr_file_hooks
     if test -f "$_gtr_config_file"
-      set _gtr_file_hooks (git config -f "$_gtr_config_file" --get-all hooks.postCd 2>/dev/null)
+      set -l _gtr_candidate_hooks (git config -f "$_gtr_config_file" --get-all hooks.postCd 2>/dev/null)
+      if test (count $_gtr_candidate_hooks) -gt 0
+        # Verify trust before including .gtrconfig hooks
+        set -l _gtr_hook_hash (git config -f "$_gtr_config_file" --get-regexp '^hooks\.' 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+        if test -n "$_gtr_hook_hash"; and test -f "$_gtr_trust_dir/$_gtr_hook_hash"
+          set _gtr_file_hooks $_gtr_candidate_hooks
+        else
+          echo "__FUNC__: Untrusted .gtrconfig hooks skipped — run 'git gtr trust' to approve" >&2
+        end
+      end
     end
     # Merge and deduplicate
     set _gtr_hooks $_gtr_git_hooks $_gtr_file_hooks

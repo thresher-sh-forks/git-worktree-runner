@@ -1,6 +1,86 @@
 #!/usr/bin/env bash
 # Hook execution system
 
+# ── Hook trust model ────────────────────────────────────────────────────
+# Hooks from .gtrconfig files (committed to repositories) require explicit
+# user approval before execution. This prevents malicious contributors from
+# injecting arbitrary commands via shared config files.
+#
+# Trust state is stored per-repo in ~/.config/gtr/trusted/<hash>
+# where <hash> is the SHA-256 of the .gtrconfig hooks content.
+
+_GTR_TRUST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gtr/trusted"
+
+# Compute a content hash of all hook entries in a .gtrconfig file
+# Usage: _hooks_file_hash <config_file>
+_hooks_file_hash() {
+  local config_file="$1"
+  local hook_content
+  hook_content=$(git config -f "$config_file" --get-regexp '^hooks\.' 2>/dev/null) || true
+  if [ -z "$hook_content" ]; then
+    return 1
+  fi
+  printf '%s' "$hook_content" | shasum -a 256 | cut -d' ' -f1
+}
+
+# Check if .gtrconfig hooks are trusted for the current repository
+# Usage: _hooks_are_trusted <config_file>
+# Returns: 0 if trusted (or no hooks), 1 if untrusted
+_hooks_are_trusted() {
+  local config_file="$1"
+  [ ! -f "$config_file" ] && return 0
+
+  local hash
+  hash=$(_hooks_file_hash "$config_file") || return 0  # no hooks = trusted
+
+  [ -f "$_GTR_TRUST_DIR/$hash" ]
+}
+
+# Mark .gtrconfig hooks as trusted
+# Usage: _hooks_mark_trusted <config_file>
+_hooks_mark_trusted() {
+  local config_file="$1"
+  local hash
+  hash=$(_hooks_file_hash "$config_file") || return 0
+
+  mkdir -p "$_GTR_TRUST_DIR"
+  printf '%s\n' "$config_file" > "$_GTR_TRUST_DIR/$hash"
+}
+
+# Get hooks, filtering out untrusted .gtrconfig hooks with a warning
+# Usage: _hooks_get_trusted <phase>
+_hooks_get_trusted() {
+  local phase="$1"
+
+  # Always include hooks from git config (user controls their own .git/config)
+  local git_hooks
+  git_hooks=$(git config --get-all "gtr.hook.$phase" 2>/dev/null) || true
+
+  # Check .gtrconfig trust before including its hooks
+  local config_file
+  config_file=$(_gtrconfig_path)
+  local file_hooks=""
+
+  if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+    if _hooks_are_trusted "$config_file"; then
+      file_hooks=$(git config -f "$config_file" --get-all "hooks.$phase" 2>/dev/null) || true
+    else
+      local untrusted_hooks
+      untrusted_hooks=$(git config -f "$config_file" --get-all "hooks.$phase" 2>/dev/null) || true
+      if [ -n "$untrusted_hooks" ]; then
+        log_warn "Untrusted .gtrconfig hooks for '$phase' phase — skipping"
+        log_warn "Review hooks in $config_file, then run: git gtr trust"
+      fi
+    fi
+  fi
+
+  # Merge and deduplicate
+  {
+    [ -n "$git_hooks" ] && printf '%s\n' "$git_hooks"
+    [ -n "$file_hooks" ] && printf '%s\n' "$file_hooks"
+  } | awk '!seen[$0]++'
+}
+
 # Run hooks for a specific phase
 # Usage: run_hooks phase [env_vars...]
 # Example: run_hooks postCreate REPO_ROOT="$root" WORKTREE_PATH="$path"
@@ -8,9 +88,9 @@ run_hooks() {
   local phase="$1"
   shift
 
-  # Get hooks from git config and .gtrconfig file
+  # Get hooks, filtering untrusted .gtrconfig hooks
   local hooks
-  hooks=$(cfg_get_all "gtr.hook.$phase" "hooks.$phase")
+  hooks=$(_hooks_get_trusted "$phase")
 
   if [ -z "$hooks" ]; then
     # No hooks configured for this phase
@@ -95,7 +175,7 @@ run_hooks_export() {
   shift
 
   local hooks
-  hooks=$(cfg_get_all "gtr.hook.$phase" "hooks.$phase")
+  hooks=$(_hooks_get_trusted "$phase")
 
   if [ -z "$hooks" ]; then
     return 0
